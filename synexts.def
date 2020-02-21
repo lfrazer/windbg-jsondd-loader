@@ -1,0 +1,17 @@
+;; ----------------------------------------------------------------------------
+LIBRARY "synexts-json"
+;; ----------------------------------------------------------------------------
+
+;; ----------------------------------------------------------------------------
+EXPORTS
+;; ----------------------------------------------------------------------------
+
+;; service functions provided for the debugger
+DebugExtensionInitialize
+DebugExtensionUninitialize
+
+;; exported extensions
+help
+addsymbol
+addmodule
+loadjsondd
