@@ -331,7 +331,7 @@ loadjsondd(
             moduleMap[imageFileName] = { modBase };
         }
 
-        pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "Trying to track module %s base=%lx (0x%x)\n", imageFileName, modBase, modNameRes);
+        pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "Trying to track module %s base=%l64x (0x%x)\n", imageFileName, modBase, modNameRes);
     }
 
 	// loop through all json labels to add symbols
@@ -391,7 +391,7 @@ loadjsondd(
         }
         else
 		{
-			//pDebugControl->Output(DEBUG_OUTPUT_ERROR, "Could not add symbol %s at %llx from json label (0x%x)\n", symName.c_str(), symOffset, hResult);
+			pDebugControl->Output(DEBUG_OUTPUT_ERROR, "Could not add symbol %s at %l64x from json label (0x%x)\n", symName.c_str(), symOffset, hResult);
 		}
 	}
 
