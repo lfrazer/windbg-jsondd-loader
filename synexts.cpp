@@ -45,6 +45,8 @@ help(
     pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "    addmodule   <NAME> <PATH> <BASE> <SIZE>\n");
     pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "                create artificial loaded modules in engine's module list\n");
     pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "\n");
+    pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "    loadjsondd   <PATH>\n");
+    pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "                load x64dbg debug json data into WinDbg as synthetic symbols (Currently only tested with 64-bit .dd64)\n");
 
     return S_OK;
 }
@@ -331,7 +333,7 @@ loadjsondd(
             moduleMap[imageFileName] = { modBase };
         }
 
-        pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "Trying to track module %s base=%l64x (0x%x)\n", imageFileName, modBase, modNameRes);
+        pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "Trying to track module %s base=%p (0x%x)\n", imageFileName, modBase, modNameRes);
     }
 
 	// loop through all json labels to add symbols
@@ -391,7 +393,7 @@ loadjsondd(
         }
         else
 		{
-			pDebugControl->Output(DEBUG_OUTPUT_ERROR, "Could not add symbol %s at %l64x from json label (0x%x)\n", symName.c_str(), symOffset, hResult);
+			pDebugControl->Output(DEBUG_OUTPUT_ERROR, "Could not add symbol %s at %p from json label (0x%x)\n", symName.c_str(), symOffset, hResult);
 		}
 	}
 
