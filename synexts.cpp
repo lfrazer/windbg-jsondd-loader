@@ -247,6 +247,89 @@ static bool GetFileNameFromPath(const char* filepath, char* outName, size_t outl
 	return false;
 }
 
+struct ModInfo
+{
+	ULONG64 baseOffset = 0;
+};
+
+static HRESULT IterateJsonDD(IDebugClient4* pDebugClient, LPCTSTR JsonFile, std::function<HRESULT(const nlohmann::json&, const std::unordered_map<std::string, ModInfo>&)>& IterFunc)
+{
+
+	// query required debug engine interfaces
+	ATL::CComQIPtr<IDebugControl> pDebugControl{ pDebugClient };
+	ATL::CComQIPtr<IDebugSymbols3> pDebugSymbols{ pDebugClient };
+
+	char* jsonData = nullptr;
+	FILE* fp = nullptr;
+	_wfopen_s(&fp, JsonFile, L"r");
+	if (fp)
+	{
+		fseek(fp, 0, SEEK_END); // seek to end of file
+		size_t fileSize = ftell(fp); // get current file pointer
+		fseek(fp, 0, SEEK_SET); // seek back to beginning of file
+
+		jsonData = new char[fileSize + 1];
+		fread(jsonData, fileSize, 1, fp);
+		jsonData[fileSize] = 0;
+
+		fclose(fp);
+	}
+	else
+	{
+		pDebugControl->Output(DEBUG_OUTPUT_ERROR, "Could not load JSON file %s\n", JsonFile);
+		return E_INVALIDARG;
+	}
+
+	nlohmann::json debugData = json::parse(jsonData, nullptr, false);
+
+	std::unordered_map<std::string, ModInfo> moduleMap;
+
+	// Setup mapping of all modules so we can get base addresses depending on the symbol's relevant module
+	HRESULT modNameRes = S_OK;
+	ULONG numLoadedMods;
+	ULONG numUnloadedMods;
+	pDebugSymbols->GetNumberModules(&numLoadedMods, &numUnloadedMods);
+
+	for (ULONG i = 0; i < numLoadedMods; ++i)
+	{
+		const ULONG nameBuffLen = 1024;
+		CHAR modNameBuff[nameBuffLen] = { 0 };
+		CHAR imageNameBuff[nameBuffLen] = { 0 };
+		CHAR loadedImageNameBuff[nameBuffLen] = { 0 };
+		ULONG modNameSize, imgNameSize, loadedImgNameSize;
+
+		modNameRes = pDebugSymbols->GetModuleNames(i, 0, imageNameBuff, nameBuffLen, &imgNameSize, modNameBuff, nameBuffLen, &modNameSize, loadedImageNameBuff, nameBuffLen, &loadedImgNameSize);
+
+		ULONG64 modBase = 0;
+		char imageFileName[nameBuffLen] = { 0 };
+		bool gotFileName = GetFileNameFromPath(imageNameBuff, imageFileName, nameBuffLen);
+
+		// convert image file name to lowercase as x64dbg-ida export does
+		for (int j = 0; j < strlen(imageFileName); ++j)
+		{
+			imageFileName[j] = (char)tolower(imageFileName[j]);
+		}
+
+		if (modNameRes == S_OK && gotFileName)
+		{
+			pDebugSymbols->GetModuleByIndex(i, &modBase);
+			moduleMap[imageFileName] = { modBase };
+		}
+
+		pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "Trying to track module %s base=%p (0x%x)\n", imageFileName, modBase, modNameRes);
+	}
+
+    HRESULT lastResult = S_OK;
+
+	// loop through all json labels to add symbols
+	for (const nlohmann::json& label : debugData["labels"])
+	{
+        lastResult = IterFunc(label, moduleMap);
+	}
+
+    return lastResult;
+}
+
 extern "C"
 HRESULT
 CALLBACK
@@ -270,75 +353,10 @@ loadjsondd(
 		return E_INVALIDARG;
 	}
 
-	char* jsonData = nullptr;
-	FILE* fp = nullptr;
-	_wfopen_s(&fp, (LPCTSTR)csJsonFile, L"r");
-	if(fp)
-	{
-		fseek(fp, 0, SEEK_END); // seek to end of file
-		size_t fileSize = ftell(fp); // get current file pointer
-		fseek(fp, 0, SEEK_SET); // seek back to beginning of file
-		
-		jsonData = new char[fileSize + 1];
-		fread(jsonData, fileSize, 1, fp);
-		jsonData[fileSize] = 0;
-
-		fclose(fp);
-	}
-	else
-	{
-		pDebugControl->Output(DEBUG_OUTPUT_ERROR, "Could not load JSON file %s\n", (LPCTSTR)csJsonFile);
-		return E_INVALIDARG;
-	}
-
     int symCount = 0;
-	auto debugData = json::parse(jsonData, nullptr, false);
 
-    struct ModInfo
+    std::function< HRESULT(const nlohmann::json&, const std::unordered_map<std::string, ModInfo>&)> addSynthSymbolFunc = [&pDebugControl, &pDebugSymbols, &symCount](const nlohmann::json& label, const std::unordered_map<std::string, ModInfo>& moduleMap) -> HRESULT
     {
-        ULONG64 baseOffset = 0;
-    };
-
-    std::unordered_map<std::string, ModInfo> moduleMap;
-
-    // Setup mapping of all modules so we can get base addresses depending on the symbol's relevant module
-    HRESULT modNameRes = S_OK;
-    ULONG numLoadedMods;
-    ULONG numUnloadedMods;
-    pDebugSymbols->GetNumberModules(&numLoadedMods, &numUnloadedMods);
-
-    for(ULONG i = 0; i < numLoadedMods; ++i)
-    {
-        const ULONG nameBuffLen = 1024;
-        CHAR modNameBuff[nameBuffLen] = { 0 };
-        CHAR imageNameBuff[nameBuffLen] = { 0 };
-        CHAR loadedImageNameBuff[nameBuffLen] = { 0 };
-        ULONG modNameSize, imgNameSize, loadedImgNameSize;
-
-        modNameRes = pDebugSymbols->GetModuleNames(i, 0, imageNameBuff, nameBuffLen, &imgNameSize, modNameBuff, nameBuffLen, &modNameSize, loadedImageNameBuff, nameBuffLen, &loadedImgNameSize);
-    
-        ULONG64 modBase = 0;
-        char imageFileName[nameBuffLen] = { 0 };
-		bool gotFileName = GetFileNameFromPath(imageNameBuff, imageFileName, nameBuffLen);
-
-        // convert image file name to lowercase as x64dbg-ida export does
-        for (int j = 0; j < strlen(imageFileName); ++j)
-        {
-            imageFileName[j] = (char)tolower(imageFileName[j]);
-        }
-
-        if (modNameRes == S_OK && gotFileName)
-        {
-            pDebugSymbols->GetModuleByIndex(i, &modBase);
-            moduleMap[imageFileName] = { modBase };
-        }
-
-        pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "Trying to track module %s base=%p (0x%x)\n", imageFileName, modBase, modNameRes);
-    }
-
-	// loop through all json labels to add symbols
-	for (const auto& label : debugData["labels"])
-	{
 
 		std::string offsetHex = label["address"].get<std::string>();
 		std::string symName = label["text"].get<std::string>();
@@ -359,7 +377,7 @@ loadjsondd(
 		DEBUG_VALUE SizeValue{}; //TODO - support 32 bit sizes..?
 		hResult =
 			pDebugControl->Evaluate(
-				"8",   
+				"8",
 				DEBUG_VALUE_INVALID,
 				&SizeValue,
 				nullptr);
@@ -370,14 +388,14 @@ loadjsondd(
 		}
 
 		// try to create artificial symbol
-        ULONG64 symOffset = OffsetValue.I64;
+		ULONG64 symOffset = OffsetValue.I64;
 
-        // if possible try to lookup module in map and add base to get correct offset
-        auto modIt = moduleMap.find(label["module"]);
-        if (modIt != moduleMap.end())
-        {
-            symOffset += modIt->second.baseOffset;
-        }
+		// if possible try to lookup module in map and add base to get correct offset
+		auto modIt = moduleMap.find(label["module"]);
+		if (modIt != moduleMap.end())
+		{
+			symOffset += modIt->second.baseOffset;
+		}
 
 		hResult =
 			pDebugSymbols->AddSyntheticSymbol(
@@ -387,15 +405,19 @@ loadjsondd(
 				DEBUG_ADDSYNTHSYM_DEFAULT,
 				nullptr);
 
-        if (hResult == S_OK)
-        {
-            symCount++;
-        }
-        else
+		if (hResult == S_OK)
+		{
+			symCount++;
+		}
+		else
 		{
 			pDebugControl->Output(DEBUG_OUTPUT_ERROR, "Could not add symbol %s at %p from json label (0x%x)\n", symName.c_str(), symOffset, hResult);
 		}
-	}
+
+        return hResult;
+    };
+
+    IterateJsonDD(pDebugClient, csJsonFile, addSynthSymbolFunc);
 
     pDebugControl->Output(DEBUG_OUTPUT_NORMAL, "Added %d symbols from %s.\n", symCount, (LPCTSTR)csJsonFile);
 
